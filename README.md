@@ -1,135 +1,209 @@
 # Crime Record & Police Station Management System (CRPSMS)
-## TAE 2: Database Implementation, Performance Optimization & Presentation
+## Database Implementation, Analytics & Query Optimization (TAE 2)
 
 **Candidate:** Gaurav Singh  
 **Roll / Seat No:** P15  
 **Course:** Database Management Systems (23UDSPCL3508 / 23UDSPCP3508)  
 **Program:** T.Y. B.Tech Computer Science & Engineering (Data Science) — Term I (2026–2027)  
 **Institution:** G H Raisoni College of Engineering and Management, Pune  
-**Target RDBMS:** MySQL 8.0 (InnoDB Storage Engine)  
-**Evaluation:** 20 Marks (10 Marks SQL & DDL Implementation + 10 Marks Optimization & Live Defense)  
+**Target RDBMS:** MySQL 8.0 Community Edition (`InnoDB` Storage Engine)  
 
 ---
 
-## 1. Repository & File Manifest
+## 1. Project Overview & Problem Statement
 
-| File | Purpose | Description |
-| :--- | :--- | :--- |
-| [`schema.sql`](schema.sql) | **DDL Schema Instantiation** | Complete database schema script defining 12 3NF normalized core tables + 1 audit log (`CrimeAuditLog`), primary keys, foreign keys with cascade policies, UNIQUE, and CHECK constraints. |
-| [`populate.py`](populate.py) | **Synthetic Data Generator** | Python pipeline extracting and synthesizing realistic, chronologically coherent records from LAPD Open Data (`Crime_Data_from_2020_to_2024.csv`). |
-| [`data.sql`](data.sql) | **DML Insert Scripts** | Pre-generated bulk SQL insert statements containing **4,029 total records** across all 12 tables (all core entities comfortably exceed the $\ge 100$ rows requirement). |
-| [`queries.sql`](queries.sql) | **Advanced SQL & Benchmarking** | Multi-table joins (inner, outer, self), correlated subqueries, 2 business views, 2 ACID stored procedures, 2 event triggers, and before-and-after EXPLAIN benchmarks. |
-| [`generate_deck.py`](generate_deck.py) | **Slide Deck Generator** | Python script utilizing Matplotlib to generate the clean, query-free 10-slide executive presentation PDF. |
-| [`Presentation_Deck.pdf`](Presentation_Deck.pdf) | **Presentation Deck (PDF)** | 10-slide high-definition visual presentation deck focused on architecture, features, analytics, and outcomes. |
-| [`VIVA_PREP_GUIDE.md`](VIVA_PREP_GUIDE.md) | **Technical Viva Defense Guide** | In-depth technical Q&A covering 3NF/BCNF normalization, ACID transaction mechanics, B-Tree index structures, and EXPLAIN plans. |
+Law enforcement agencies historically maintained incident records in unnormalized, flat spreadsheets or siloed register logs. In such legacy architectures, repeating groups (e.g., multiple crime codes on a single incident line) violate first normal form, while descriptive data (e.g., station names, weapon types, premise categories) create severe update, insertion, and deletion anomalies. Furthermore, legacy systems lack integration between frontline police incident logging, detective assignment, suspect apprehension, and judicial court proceedings.
+
+The **Crime Record & Police Station Management System (CRPSMS)** is an enterprise relational database system engineered to address these operational and architectural deficiencies. Grounded in authentic municipal crime data from the City of Los Angeles (LAPD Open Data 2020–2024), CRPSMS transitions unstructured flat incident logs into a normalized, high-integrity 3NF/BCNF relational ecosystem.
+
+### Core Objectives:
+1. **Relational Normalization:** Decompose flat 28-column legacy records into 12 normalized tables + 1 audit relation with zero data redundancy.
+2. **Operational Continuity:** Bridge police reporting directly to judicial prosecutions (Incident $\rightarrow$ Detective $\rightarrow$ Suspect $\rightarrow$ Court Docket).
+3. **Transactional Integrity:** Implement ACID-compliant stored procedures with automatic rollback exception handlers.
+4. **Reactive Automation & Auditing:** Automate incident status transitions upon suspect arrest and capture tamper-proof audit trails.
+5. **Performance Engineering:** Optimize high-frequency analytical queries using composite B-Tree indexes, validated via empirical `EXPLAIN` execution plans.
 
 ---
 
-## 2. Table Summary & Record Volume Certification
+## 2. Dataset & Engineering Methodology
 
-All core entity tables comfortably exceed the mandatory **100+ rows** threshold with real data extracted from the LAPD dataset:
+- **Data Source:** City of Los Angeles Open Data Portal (Dataset ID: `2nrs-mtv8`).
+- **Raw File:** `Crime_Data_from_2020_to_2024.csv` (255 MB, real municipal police records).
+- **Extraction & Cleaning:** Processed via an automated Python data pipeline (`populate.py`) with strict referential and chronological invariants:
+  $$\text{Occurrence Date} \le \text{Reported Date} \le \text{Arrest Date} \le \text{Filing Date} \le \text{Verdict Date}$$
+- **Spatial Precision:** Latitude and Longitude coordinates strictly bounded within authentic geographic perimeters of the 21 LAPD divisions.
 
-| Table | Entity Category | Total Records | Faculty Target | Compliance Status |
+---
+
+## 3. Database Schema & Normalization Architecture
+
+The relational schema is structured into a 4-tier dependency graph to prevent circular references and enforce referential integrity:
+
+```
+Tier 1: Master Lookup & Reference Tables (Independent Entities)
+  ├── PoliceStation (AREA [PK], AREA_NAME [UQ])
+  ├── CrimeType (Crm_Cd [PK], Crm_Cd_Desc, Part_1_2 [CHECK])
+  ├── Premises (Premis_Cd [PK], Premis_Desc)
+  ├── Weapon (Weapon_Used_Cd [PK], Weapon_Desc)
+  ├── CaseStatus (Status [PK], Status_Desc)
+  └── Court (CourtID [PK], CourtName, Address, Jurisdiction)
+
+Tier 2: Station-Assigned Personnel
+  └── Officer (OfficerID [PK], BadgeNo [UQ], Name, `Rank`, AREA [FK])
+
+Tier 3: Central Incident Entity
+  └── FIR (DR_NO [PK], Date_Rptd, Date_Occ, Time_Occ, LOCATION, Cross_Street,
+           LAT, LON, AREA [FK], Premis_Cd [FK], Weapon_Used_Cd [FK], 
+           Status [FK], OfficerID [FK])
+
+Tier 4: Associative, Dependent & Audit Relations
+  ├── FIR_CrimeType (DR_NO [FK], Crm_Cd [FK]) [Composite PK: 1NF Resolution]
+  ├── Victim (VictimID [PK], Vict_Age [CHECK], Vict_Sex [CHECK], Vict_Descent, DR_NO [FK])
+  ├── Accused (AccusedID [PK], Name, Age [CHECK], Gender [CHECK], Address, ArrestDate, DR_NO [FK])
+  ├── CourtCase (CaseID [PK], CaseNo [UQ], FilingDate, Verdict, VerdictDate, DR_NO [FK, UQ], CourtID [FK], AccusedID [FK])
+  └── CrimeAuditLog (LogID [PK], DR_NO, OldStatus, NewStatus, ChangedBy, ChangedAt, ActionDesc)
+```
+
+### Normalization Validation:
+- **1NF:** Removed repeating columns (`Crm_Cd_1` through `Crm_Cd_4`) by establishing the M:N associative entity `FIR_CrimeType(DR_NO, Crm_Cd)`. All attributes are atomic.
+- **2NF:** Extracted functional dependencies (`Crm_Cd -> Crm_Cd_Desc`, `Premis_Cd -> Premis_Desc`) from composite candidate keys into standalone lookup tables.
+- **3NF & BCNF:** Decoupled transitive dependencies (`DR_NO -> AREA -> AREA_NAME`) into `PoliceStation`. In every functional dependency $X \rightarrow Y$, the determinant $X$ is a superkey.
+- **Cascade & Constraint Policies:**
+  - `ON UPDATE CASCADE` enforced across all 12 relations.
+  - `ON DELETE CASCADE` applied strictly to dependent child entities (`Victim`, `Accused`, `FIR_CrimeType`).
+  - `ON DELETE RESTRICT` applied to foundational master tables (`PoliceStation`, `Officer`, `Court`).
+  - `CHECK` constraints on demographic bounds (`Vict_Age BETWEEN 0 AND 125`, `Vict_Sex IN ('M','F','X')`) and temporal rules (`Date_Rptd >= Date_Occ`).
+
+---
+
+## 4. Populated Data Volume & Entity Metrics
+
+All core entity tables comfortably exceed the academic evaluation threshold of $\ge 100$ records:
+
+| Table | Entity Classification | Populated Rows | Evaluation Target | Compliance Status |
 | :--- | :--- | :---: | :---: | :---: |
-| `FIR` | **Central Incident Records** | **1,092** | **≥ 100 Rows** | **PASSED** |
-| `Victim` | **Victim Demographics** | **994** | **≥ 100 Rows** | **PASSED** |
-| `Accused` | **Suspect / Arrest Dockets** | **142** | **≥ 100 Rows** | **PASSED** |
-| `CourtCase` | **Judicial Prosecutions** | **115** | **≥ 100 Rows** | **PASSED** |
-| `FIR_CrimeType` | **M:N Charge Links** | **1,166** | **≥ 100 Rows** | **PASSED** |
-| `CrimeType` | Penal Code Classifications | 134 | Master Table | **PASSED** |
+| `FIR` | Central Incident Register | **1,092** | $\ge 100$ Rows | **PASSED** |
+| `Victim` | Victim Demographic Profiles | **994** | $\ge 100$ Rows | **PASSED** |
+| `Accused` | Suspect / Arrest Dockets | **142** | $\ge 100$ Rows | **PASSED** |
+| `CourtCase` | Judicial Prosecutions | **115** | $\ge 100$ Rows | **PASSED** |
+| `FIR_CrimeType` | M:N Incident-to-Charge Links | **1,166** | $\ge 100$ Rows | **PASSED** |
+| `CrimeType` | California Penal Codes | 134 | Master Table | **PASSED** |
 | `Premises` | Location Categorization | 228 | Master Table | **PASSED** |
-| `Weapon` | Weapons / Force Codes | 72 | Master Table | **PASSED** |
-| `Officer` | Investigating Detectives | 50 | Master Table | **PASSED** |
-| `PoliceStation` | LAPD Divisions | 21 | Full Division Network | **PASSED** |
+| `Weapon` | Weapons & Force Mechanisms | 72 | Master Table | **PASSED** |
+| `Officer` | LAPD Investigating Detectives | 50 | Master Table | **PASSED** |
+| `PoliceStation` | Complete LAPD Division Network | 21 | Full Network | **PASSED** |
 | `Court` | California Judicial Courts | 10 | Master Table | **PASSED** |
 | `CaseStatus` | Clearance Status Codes | 5 | Master Table | **PASSED** |
-| `CrimeAuditLog` | Dynamic State Transitions | Event-Driven | Audit Table | **PASSED** |
-| **Total Database Records** | | **4,029 Rows** | Across 12 Relations | **Fully Compliant** |
+| `CrimeAuditLog` | State Transition Audit Trail | Event-Driven | Audit Table | **PASSED** |
+| **Total Database Records** | | **4,029 Rows** | Across 12 Relations | **100% Compliant** |
 
 ---
 
-## 3. Relational Schema Architecture (12 Tables + Audit Relation)
+## 5. Functional Modules & Database Features
 
-The schema is organized into a clean 4-tier dependency structure to enforce data integrity:
+### 5.1 Multi-Dimensional Incident Logging
+- Centralized incident repository recording spatial GPS coordinates, cross streets, premise classifications, weapon categories, and clearance statuses.
+- Supports multi-charge tracking via the `FIR_CrimeType` junction relation.
 
-```
-Level 1: Master Lookups & Independent Entities
-  ├── PoliceStation (AREA PK, AREA_NAME UQ)
-  ├── CrimeType (Crm_Cd PK, Part_1_2 CHECK)
-  ├── Premises (Premis_Cd PK)
-  ├── Weapon (Weapon_Used_Cd PK)
-  ├── CaseStatus (Status PK)
-  └── Court (CourtID PK)
+### 5.2 Detective Assignment & Caseload Governance
+- Directory of active officers and detectives categorized by badge number, division, and rank.
+- **Relational Peer Pairing:** A self-join query matches detectives of identical rank within the same station using an inequality predicate (`o1.OfficerID < o2.OfficerID`) to eliminate duplicate pairings `(A, B)` vs `(B, A)`.
+- Monitors detective workload to identify unassigned personnel or overload situations.
 
-Level 2: Station Assigned Personnel
-  └── Officer (OfficerID PK, BadgeNo UQ, AREA FK)
+### 5.3 Judicial Prosecution Pipeline & Backlog Tracking
+- 1:1 bridge connecting cleared police incidents (`FIR`) directly to official court dockets (`CourtCase`).
+- Tracks case filing dates, assigned judges/courts, defense representation, and final verdicts.
+- Evaluates active litigation turnaround times to detect speedy-trial bottlenecks.
 
-Level 3: Central Incident Relation
-  └── FIR (DR_NO PK, AREA FK, Premis FK, Weapon FK, Officer FK, Status FK)
-
-Level 4: Dependent & Associative Entities
-  ├── FIR_CrimeType (DR_NO FK, Crm_Cd FK) [Composite PK: 1NF Junction]
-  ├── Victim (VictimID PK, DR_NO FK, Age/Sex CHECK)
-  ├── Accused (AccusedID PK, DR_NO FK, Age/Gender CHECK)
-  ├── CourtCase (CaseID PK, CaseNo UQ, DR_NO FK UQ, CourtID FK, AccusedID FK)
-  └── CrimeAuditLog (LogID PK, DR_NO, OldStatus, NewStatus, ChangedBy, ChangedAt)
-```
+### 5.4 Pre-Compiled Business Intelligence Views
+- **`vw_StationCrimePerformance`:** Aggregates total crime volume, assigned detective strength, solved adult arrests (`Status = 'AA'`), and calculates the dynamic clearance percentage per division:
+  $$\text{Solved Percentage} = \frac{\sum \text{Solved Cases} \times 100.0}{\text{NULLIF}(\text{Total Incidents}, 0)}$$
+- **`vw_CourtCaseBacklogSummary`:** Computes active `Days_In_Litigation` via `DATEDIFF()` between court filing date and final verdict (or `CURRENT_DATE()` for pending trials) to identify constitutional delay violations.
 
 ---
 
-## 4. Step-by-Step Execution Guide
+## 6. Transaction Management, Stored Procedures & Triggers
 
-### Option A: Using MySQL Workbench 8.0 (Recommended for Live Demo)
-1. Open **MySQL Workbench 8.0** and connect to your local MySQL instance (`Local instance MySQL80`).
-2. Open and execute [`schema.sql`](schema.sql):
-   - Click `File` -> `Open SQL Script...` -> select `schema.sql`.
-   - Click the **Execute (Lightning icon)** to instantiate `crpsms_db`.
-3. Open and execute [`data.sql`](data.sql):
-   - Click `File` -> `Open SQL Script...` -> select `data.sql`.
-   - Click **Execute** to populate all 4,029 records.
-4. Open [`queries.sql`](queries.sql):
-   - Highlight and execute queries section-by-section during your live demonstration.
+### 6.1 ACID-Compliant Stored Procedures
+- **`sp_RegisterNewFIR`:** Executes a multi-table atomic transaction writing across `FIR`, `FIR_CrimeType`, and `Victim`.
+  - **Atomicity:** Governed by `START TRANSACTION` and `COMMIT`.
+  - **Exception Handling:** Intercepted by `DECLARE EXIT HANDLER FOR SQLEXCEPTION` which triggers an immediate `ROLLBACK` if any constraint fails, preventing orphan incident records.
+  - **Validation:** Enforces `Date_Rptd >= Date_Occ` via custom signal exceptions.
+- **`sp_ProcessArrestAndCourtFiling`:** Handles suspect booking, updates case clearance, and files an official judicial case in a single transaction.
 
-### Option B: Using Windows Terminal / PowerShell
-```powershell
-# Navigate to the project directory
+### 6.2 Reactive Triggers & Audit Automation
+- **`trg_Accused_AutoUpdate_FIRStatus` (Workflow Automation):**  
+  An `AFTER INSERT` trigger on `Accused` that automatically advances the parent `FIR` status from `'IC'` (Investigation Continued) to `'AA'` (Adult Arrest) whenever a suspect is booked with an arrest date.
+- **`trg_FIR_Status_Audit` (Tamper-Proof Audit Logging):**  
+  An `AFTER UPDATE` trigger on `FIR` that monitors status modifications. When `OLD.Status <> NEW.Status`, it records an immutable audit entry in `CrimeAuditLog` containing `DR_NO`, old and new status codes, `CURRENT_USER()`, and `NOW()`.
+- **Trigger Chaining:** Inserting an arrest automatically updates the FIR, which in turn immediately fires the audit trigger to record the change.
+
+---
+
+## 7. Performance Optimization & Indexing Benchmarks
+
+High-volume filtering queries were evaluated using MySQL `EXPLAIN` execution plans before and after B-Tree index creation.
+
+### Benchmark Analysis: Multi-Station Date-Range Filter
+```sql
+SELECT f.DR_NO, f.Date_Occ, p.AREA_NAME, ct.Crm_Cd_Desc, f.LOCATION
+FROM FIR f
+INNER JOIN PoliceStation p ON f.AREA = p.AREA
+INNER JOIN FIR_CrimeType fc ON f.DR_NO = fc.DR_NO
+INNER JOIN CrimeType ct ON fc.Crm_Cd = ct.Crm_Cd
+WHERE f.Date_Occ BETWEEN '2022-01-01' AND '2023-06-30'
+  AND f.AREA IN (1, 2, 3, 6)
+  AND ct.Part_1_2 = 1;
+```
+
+### Empirical Plan Comparison:
+
+| Metric | Before Indexing (Baseline) | After Indexing (`idx_fir_date_area`) | Performance Gain |
+| :--- | :---: | :---: | :---: |
+| **Index Applied** | None (Primary Key scan only) | `CREATE INDEX idx_fir_date_area ON FIR(Date_Occ, AREA)` | Targeted Composite B-Tree |
+| **Access Type** | `ALL` (Full Table Scan) | `range / ref` (Index Range Seek) | Optimal algorithmic seek |
+| **Rows Examined** | **1,092 rows** (100% table scan) | **~18 rows** (narrow index leaves) | **~88% scan reduction** |
+| **Execution Extra** | `Using where; Using temporary; Using filesort` | `Using index condition` | **Filesort completely eliminated** |
+
+### Index Design Strategy:
+- **Leftmost Prefix Rule:** `Date_Occ` is placed first to accelerate range and point lookups, while `AREA` filters specific station partitions.
+- **Write-Overhead Balance:** Indexed only high-cardinality search attributes to prevent page-split overhead on frequent bulk inserts.
+
+---
+
+## 8. Repository File Manifest
+
+| File | Type | Description |
+| :--- | :---: | :--- |
+| [`schema.sql`](schema.sql) | DDL | Complete schema definition for 12 normalized tables + audit table, constraints, and cascade rules. |
+| [`data.sql`](data.sql) | DML | 4,029 pre-generated bulk SQL insert statements across all 12 tables. |
+| [`queries.sql`](queries.sql) | DQL/DML | Advanced joins, self-joins, correlated subqueries, 2 views, 2 stored procedures, 2 triggers, and EXPLAIN benchmarks. |
+| [`populate.py`](populate.py) | Python | Data synthesis and extraction pipeline that created `data.sql` from raw LAPD records. |
+| [`Crime_Data_from_2020_to_2024.csv`](Crime_Data_from_2020_to_2024.csv) | CSV | 255 MB municipal crime dataset from the City of Los Angeles Open Data Portal. |
+| [`Presentation_Deck.pdf`](Presentation_Deck.pdf) | PDF | 10-slide high-definition visual presentation deck detailing project features, analytics, and architecture. |
+| [`generate_deck.py`](generate_deck.py) | Python | Script used to generate the presentation deck. |
+
+---
+
+## 9. Database Execution Guide
+
+### Using MySQL Workbench 8.0:
+1. Connect to your local MySQL instance (`Local instance MySQL80`).
+2. Open and execute [`schema.sql`](schema.sql) to instantiate `crpsms_db`.
+3. Open and execute [`data.sql`](data.sql) to load all 4,029 records.
+4. Open [`queries.sql`](queries.sql) and execute queries section-by-section.
+
+### Using MySQL Command Line Client:
+```bash
+# Navigate to project directory
 cd "c:\Users\shali\Desktop\DBMS TAE"
 
-# 1. Execute schema creation DDL
-& "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u root -p < schema.sql
+# 1. Instantiate Schema
+mysql -u root -p < schema.sql
 
-# 2. Populate 4,029 records
-& "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u root -p crpsms_db < data.sql
+# 2. Populate Records
+mysql -u root -p crpsms_db < data.sql
 
-# 3. Run advanced queries, procedures, triggers & benchmarks
-& "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u root -p crpsms_db < queries.sql
+# 3. Execute Queries & Benchmarks
+mysql -u root -p crpsms_db < queries.sql
 ```
-
----
-
-## 5. 8-Minute Live Demonstration & Viva Defense Script
-
-| Timing | Phase / Action | Key Speaking Points |
-| :---: | :--- | :--- |
-| **0:00 - 1:00** | **Slide Deck (Slides 1–4)** | • Introduce CRPSMS domain, LAPD real-world origin, and 12-table 3NF schema.<br>• Highlight features: GPS incident logging, detective pairing, prosecution pipeline. |
-| **1:00 - 2:00** | **Slide Deck (Slides 5–10)** | • Present data volume (4,029 rows), business analytics (clearance rates, litigation duration), and EXPLAIN benchmark (88% row scan reduction).<br>• Transition smoothly to MySQL Workbench. |
-| **2:00 - 3:00** | **Workbench: Record Counts** | • Run verification query: show `FIR` (1,092), `Victim` (994), `Accused` (142), `CourtCase` (115).<br>• Demonstrates full compliance with the 100+ rows mandate. |
-| **3:00 - 4:15** | **Workbench: Joins & Subqueries** | • Run **5-Table Join** showing complete incident dossier.<br>• Run **Self-Join** pairing peer detectives by station and rank.<br>• Run **Correlated Subquery** evaluating victim age against dynamic station averages. |
-| **4:15 - 5:15** | **Workbench: Views** | • Query `vw_StationCrimePerformance` (clearance rate %, solved cases).<br>• Query `vw_CourtCaseBacklogSummary` (tracks `Days_In_Litigation` via `DATEDIFF`). |
-| **5:15 - 6:30** | **Workbench: Procedures & Triggers** | • Call `sp_RegisterNewFIR(...)` (demonstrates atomic transaction with `COMMIT`).<br>• Call `sp_ProcessArrestAndCourtFiling(...)` (Trigger 2 updates FIR to `'AA'`).<br>• Query `CrimeAuditLog` to show the dynamic audit entry captured by Trigger 1! |
-| **6:30 - 7:30** | **Workbench: EXPLAIN Optimization** | • Execute `EXPLAIN` before index (`type: ALL`, 1,092 rows scanned, `Using filesort`).<br>• Create composite index: `CREATE INDEX idx_fir_date_area ON FIR(Date_Occ, AREA);`<br>• Re-execute `EXPLAIN` (`type: range/ref`, scans only ~18 rows, filesort eliminated!). |
-| **7:30 - 8:00** | **Conclusion & Transition** | Summarize database achievements and invite questions from the panel. |
-| **8:00 - 10:00**| **Faculty Viva Defense (Q&A)** | Refer to [`VIVA_PREP_GUIDE.md`](VIVA_PREP_GUIDE.md) for quick-fire conceptual answers! |
-
----
-
-## 6. Submission Checklist
-
-- [x] **Strict Continuity:** Retains the exact CRPSMS domain, entities, and constraints approved in TAE 1.
-- [x] **Data Volume:** 1,092 FIR, 994 Victim, 142 Accused, 115 CourtCase rows (all comfortably > 100 rows).
-- [x] **`schema.sql`:** Complete DDL with PKs, FK cascades, UNIQUE, and CHECK constraints.
-- [x] **`populate.py` & `data.sql`:** 4,029 realistic records extracted and synthesized from LAPD CSV data.
-- [x] **`queries.sql`:** Joins, Self-Join, Correlated Subqueries, 2 Views, 2 Procedures, 2 Triggers, EXPLAIN benchmarks.
-- [x] **`Presentation_Deck.pdf`:** 10-slide high-definition visual presentation deck focused on features and analytics.
-- [x] **`VIVA_PREP_GUIDE.md`:** Comprehensive Q&A defense reference for faculty evaluation.
-- [x] **Submission Ready:** Upload repository ZIP or GitHub link to the [Official Submission Form](https://forms.gle/gNqKA79iBZMmLxtV9).
